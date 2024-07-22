@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: clone-client-sync
-Version: 0.0.1
+Version: 0.0.2
 Summary: Synchronous wrapper for async clone_client
 Author: Clone Inc.
 Requires-Python: >=3.9,<4.0
@@ -9,7 +9,7 @@ Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
 Classifier: Programming Language :: Python :: 3.11
 Classifier: Programming Language :: Python :: 3.12
-Requires-Dist: clone-client @ git+https://github.com/clonerobotics/clone_client@0.0.15
+Requires-Dist: clone-client @ git+https://github.com/clonerobotics/clone_client@0.0.16
 Description-Content-Type: text/markdown
 
 # Clone Client Sync
