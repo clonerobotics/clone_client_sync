@@ -2,7 +2,7 @@ import time
 
 from clone_client_sync.client_sync import ClientSync
 
-client = ClientSync(hostname="ubuntu", address=None)
+client = ClientSync(hostname="ubuntu", address="127.0.0.1")
 client.connnect()
 
 for _ in range(1000):

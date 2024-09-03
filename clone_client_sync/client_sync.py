@@ -4,7 +4,6 @@ from queue import Queue
 import threading
 from typing import List, Optional
 from clone_client.client import Client
-from clone_client.types import Pressure
 
 
 class ReqType(enum.IntEnum):
@@ -23,8 +22,8 @@ class ClientSync:
 
         self._async_client: Client = Client(server=hostname, address=address)
         self._req_queue: Queue[ReqType] = Queue()
-        self._pqueue_in: Queue[List[Pressure]] = Queue()
-        self._pqueue_out: Queue[List[Pressure]] = Queue()
+        self._pqueue_in: Queue[List[float]] = Queue()
+        self._pqueue_out: Queue[List[float]] = Queue()
         self._busy = threading.Lock()
         self._thread = threading.Thread(target=self._run_in_background)
         self.connected = threading.Event()
@@ -34,7 +33,7 @@ class ClientSync:
         """Return the underlying async client for all properties access."""
         return self._async_client
 
-    def get_pressures(self, timeout: int = None) -> List[Pressure]:
+    def get_pressures(self, timeout: int = None) -> List[float]:
         """
         Returns current contraction reading for each muscle.
 
@@ -47,7 +46,7 @@ class ClientSync:
         self._req_queue.put(ReqType.GET_PRESSURES)
         return self._pqueue_out.get(timeout=timeout)
 
-    def set_pressures(self, pressures: List[Pressure]) -> None:
+    def set_pressures(self, pressures: List[float]) -> None:
         """
         Allows individual actuation of muscles (setting the pressure).
 
@@ -69,7 +68,8 @@ class ClientSync:
                 req = self._req_queue.get()
                 with self._busy:
                     if req == ReqType.GET_PRESSURES:
-                        pressures = await client.get_pressures()
+                        tele = await client.get_telemetry()
+                        pressures = tele.pressures
                         self._pqueue_out.put(pressures)
                     elif req == ReqType.SET_PRESSURES:
                         pressures = self._pqueue_in.get()
