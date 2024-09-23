@@ -1,16 +1,11 @@
 import asyncio
-import enum
-from queue import Queue
+import logging
 import threading
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional, cast
 from clone_client.client import Client
+import grpc
 
-
-class ReqType(enum.IntEnum):
-    """Request type enumeration."""
-
-    SET_PRESSURES = enum.auto()
-    GET_PRESSURES = enum.auto()
+LOGGER = logging.getLogger(__name__)
 
 
 class ClientSync:
@@ -21,11 +16,12 @@ class ClientSync:
             raise ValueError("You need to provide either hostname or address.")
 
         self._async_client: Client = Client(server=hostname, address=address)
-        self._req_queue: Queue[ReqType] = Queue()
-        self._pqueue_in: Queue[List[float]] = Queue()
-        self._pqueue_out: Queue[List[float]] = Queue()
-        self._busy = threading.Lock()
+        self._pqueue_in: asyncio.Queue[List[float]] = asyncio.Queue()
+        self._pqueue_out: asyncio.Queue[List[float]] = asyncio.Queue()
         self._thread = threading.Thread(target=self._run_in_background)
+
+        self._busy = asyncio.Lock()
+        self._stop = threading.Event()
         self.connected = threading.Event()
 
     @property
@@ -43,8 +39,10 @@ class ClientSync:
         drift (1-3%).
         """
 
-        self._req_queue.put(ReqType.GET_PRESSURES)
-        return self._pqueue_out.get(timeout=timeout)
+        async def task():
+            return await asyncio.wait_for(self._pqueue_out.get(), timeout=timeout)
+
+        return asyncio.run(task())
 
     def set_pressures(self, pressures: List[float]) -> None:
         """
@@ -55,27 +53,42 @@ class ClientSync:
         and to the calibration values of each sensor to componesate minimal
         drift (1-3%).
         """
-        self._req_queue.put(ReqType.SET_PRESSURES)
-        self._pqueue_in.put(pressures)
-        with self._busy:
-            pass
+        self._pqueue_in.put_nowait(pressures)
 
     async def run(self) -> None:
         """Run the async client."""
         async with self._async_client as client:
-            self.connected.set()
-            while True:
-                req = self._req_queue.get()
-                with self._busy:
-                    if req == ReqType.GET_PRESSURES:
-                        tele = await client.get_telemetry()
-                        pressures = tele.pressures
-                        self._pqueue_out.put(pressures)
-                    elif req == ReqType.SET_PRESSURES:
-                        pressures = self._pqueue_in.get()
-                        await client.set_pressures(pressures)
-                    elif req is None:
+            async def ctrl_generator() -> AsyncGenerator[List[float], None]:
+                while not self._stop.is_set():
+                    data = await self._pqueue_in.get()
+                    if data is None:
+                        LOGGER.info("Stopping control stream.")
                         break
+
+                    yield data
+
+            async def telemetry_consumer() -> AsyncGenerator[List[float], None]:
+                async for telemetry in client.subscribe_telemetry():
+                    if self._stop.is_set():
+                        break
+
+                    await self._pqueue_out.put(telemetry.pressures)
+
+                LOGGER.info("Stopping telemetry stream.")
+
+            self.connected.set()
+
+            control_stream_task = asyncio.create_task(client.stream_set_pressures(ctrl_generator()))
+            telemetry_stream_task = asyncio.create_task(telemetry_consumer())
+
+            try:
+                await asyncio.gather(control_stream_task, telemetry_stream_task)
+            except grpc.aio.AioRpcError as err:
+                err = cast(grpc.RpcError, err)
+                if err.code() == grpc.StatusCode.CANCELLED:
+                    LOGGER.info(err.details())
+                else:
+                    raise
 
     def _run_in_background(self) -> None:
         """Start the client."""
@@ -84,11 +97,14 @@ class ClientSync:
 
     def connnect(self) -> None:
         """Initialize the client and wait for the connection to the server."""
+        self._stop.clear()
         self._thread.start()
         self.connected.wait()
 
     def disconnect(self) -> None:
         """Disconnect the client."""
-        self._req_queue.put(None)
+        self._pqueue_in.put_nowait(None)
+        self._stop.set()
         self._thread.join()
         self.connected.clear()
+        self._stop.clear()
