@@ -17,10 +17,10 @@ class ClientSync:
 
         self._async_client: Client = Client(server=hostname, address=address)
         self._pqueue_in: asyncio.Queue[List[float]] = asyncio.Queue()
-        self._pqueue_out: asyncio.Queue[List[float]] = asyncio.Queue()
+        self._latest_pressures: List[float]
         self._thread = threading.Thread(target=self._run_in_background)
 
-        self._busy = asyncio.Lock()
+        self._prcv = threading.Event()
         self._stop = threading.Event()
         self.connected = threading.Event()
 
@@ -39,10 +39,8 @@ class ClientSync:
         drift (1-3%).
         """
 
-        async def task():
-            return await asyncio.wait_for(self._pqueue_out.get(), timeout=timeout)
-
-        return asyncio.run(task())
+        self._prcv.wait(timeout)
+        return self._latest_pressures
 
     def set_pressures(self, pressures: List[float]) -> None:
         """
@@ -72,7 +70,8 @@ class ClientSync:
                     if self._stop.is_set():
                         break
 
-                    await self._pqueue_out.put(telemetry.pressures)
+                    self._latest_pressures = telemetry.pressures
+                    self._prcv.set()
 
                 LOGGER.info("Stopping telemetry stream.")
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clone-client-sync"
-version = "0.0.4"
+version = "0.0.5"
 description = "Synchronous wrapper for async clone_client"
 authors = ["Clone Inc."]
 readme = "README.md"
