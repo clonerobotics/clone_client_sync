@@ -1,11 +1,16 @@
 import asyncio
 import logging
 import threading
-from typing import AsyncGenerator, List, Optional, cast
-from clone_client.client import Client
+from typing import Any, AsyncGenerator, Coroutine, List, Optional, Sequence, TypeVar, cast
+
 import grpc
 
+from clone_client.client import Client
+from clone_client.state_store.proto.state_store_pb2 import TelemetryData, IMUData
+
+
 LOGGER = logging.getLogger(__name__)
+RT = TypeVar("RT")
 
 
 class ClientSync:
@@ -16,20 +21,49 @@ class ClientSync:
             raise ValueError("You need to provide either hostname or address.")
 
         self._async_client: Client = Client(server=hostname, address=address)
-        self._pqueue_in: asyncio.Queue[List[float]] = asyncio.Queue()
-        self._latest_pressures: List[float]
-        self._thread = threading.Thread(target=self._run_in_background)
+        self._latest_telemetry: TelemetryData
+        self._latest_pressures: Sequence[float]
+        self._latest_imu: Sequence[IMUData]
 
-        self._prcv = threading.Event()
-        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run_in_background)
+        self._trcv = threading.Event()
+        self._pack = threading.Event()
         self.connected = threading.Event()
+        self._stop: threading.Event = threading.Event()
+
+        self.ready: asyncio.Event
+        self._pqueue_in: asyncio.Queue[List[float]]
+        self.aioloop: asyncio.BaseEventLoop
+
+        self.tasks = []
 
     @property
     def async_client(self) -> Client:
         """Return the underlying async client for all properties access."""
         return self._async_client
 
-    def get_pressures(self, timeout: int = None) -> List[float]:
+    def run_in_aioloop(self, coro: Coroutine[Any, Any, RT], timeout: Optional[float] = 1) -> RT:
+        """Run a coroutine in the current asyncio loop and wait for the result."""
+        future = asyncio.run_coroutine_threadsafe(coro, self.aioloop)
+        return future.result(timeout)
+
+    def get_telemetry(self, timeout: Optional[int] = None) -> TelemetryData:
+        """Return the latest telemetry data including IMUs and pressure readouts"""
+        self._trcv.wait(timeout)
+        telemetry = self._latest_telemetry
+        self._trcv.clear()
+
+        return telemetry
+
+    def get_imus(self, timeout: Optional[int] = None) -> Sequence[IMUData]:
+        """Return the latest IMU data."""
+        self._trcv.wait(timeout)
+        imu = self._latest_imu
+        self._trcv.clear()
+
+        return imu
+
+    def get_pressures(self, timeout: Optional[int] = None) -> Sequence[float]:
         """
         Returns current contraction reading for each muscle.
 
@@ -38,11 +72,13 @@ class ClientSync:
         and to calibration values of each sensor to compensate minimal
         drift (1-3%).
         """
+        self._trcv.wait(timeout)
+        pressures = self._latest_pressures
+        self._trcv.clear()
 
-        self._prcv.wait(timeout)
-        return self._latest_pressures
+        return pressures
 
-    def set_pressures(self, pressures: List[float]) -> None:
+    def set_pressures(self, pressures: List[float], timeout: Optional[int] = None) -> None:
         """
         Allows individual actuation of muscles (setting the pressure).
 
@@ -51,48 +87,65 @@ class ClientSync:
         and to the calibration values of each sensor to componesate minimal
         drift (1-3%).
         """
+        self._pack.clear()
         self._pqueue_in.put_nowait(pressures)
+        self._pack.wait(timeout)
 
     async def run(self) -> None:
         """Run the async client."""
         async with self._async_client as client:
             async def ctrl_generator() -> AsyncGenerator[List[float], None]:
+                await self.ready.wait()
                 while not self._stop.is_set():
                     data = await self._pqueue_in.get()
                     if data is None:
                         LOGGER.info("Stopping control stream.")
-                        break
+                        return
 
                     yield data
+                    self._pack.set()
 
             async def telemetry_consumer() -> AsyncGenerator[List[float], None]:
+                await self.ready.wait()
                 async for telemetry in client.subscribe_telemetry():
                     if self._stop.is_set():
-                        break
+                        LOGGER.info("Stopping telemetry stream.")
+                        return
 
+                    self._latest_telemetry = telemetry
                     self._latest_pressures = telemetry.pressures
-                    self._prcv.set()
+                    self._latest_imu = telemetry.imu
+                    self._trcv.set()
 
-                LOGGER.info("Stopping telemetry stream.")
+            control_stream_task = self.aioloop.create_task(client.stream_set_pressures(ctrl_generator()))
+            telemetry_stream_task = self.aioloop.create_task(telemetry_consumer())
+            self.tasks = [control_stream_task, telemetry_stream_task]
 
             self.connected.set()
+            LOGGER.info("Connected to the robot.")
 
-            control_stream_task = asyncio.create_task(client.stream_set_pressures(ctrl_generator()))
-            telemetry_stream_task = asyncio.create_task(telemetry_consumer())
-
+            self.ready.set()
             try:
-                await asyncio.gather(control_stream_task, telemetry_stream_task)
+                await control_stream_task
+                await telemetry_stream_task
             except grpc.aio.AioRpcError as err:
                 err = cast(grpc.RpcError, err)
                 if err.code() == grpc.StatusCode.CANCELLED:
                     LOGGER.info(err.details())
                 else:
-                    raise
+                    LOGGER.exception(err)
+            except asyncio.CancelledError:
+                LOGGER.info("Task was cancelled.")
+            finally:
+                LOGGER.info("Closing the connection.")
 
     def _run_in_background(self) -> None:
         """Start the client."""
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.run())
+        self.ready = asyncio.Event()
+        self._pqueue_in = asyncio.Queue()
+        self.aioloop = asyncio.new_event_loop()
+
+        self.aioloop.run_until_complete(self.run())
 
     def connnect(self) -> None:
         """Initialize the client and wait for the connection to the server."""
@@ -104,6 +157,9 @@ class ClientSync:
         """Disconnect the client."""
         self._pqueue_in.put_nowait(None)
         self._stop.set()
+
+        for task in self.tasks:
+            task.cancel()
+
         self._thread.join()
         self.connected.clear()
-        self._stop.clear()
