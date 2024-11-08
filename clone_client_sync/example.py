@@ -25,7 +25,12 @@ try:
     time.sleep(3)
 
     # Initialize a precise interval ticker
-    tick = precise_interval(1 / 10)
+    tick = precise_interval(1 / 150)
+
+    for _ in range(20):
+        start = time.perf_counter_ns()
+        next(tick)  # Tick
+        print(1 / ((time.perf_counter_ns() - start) * 1e-9))
 
     for _ in range(20):
         next(tick)  # Tick

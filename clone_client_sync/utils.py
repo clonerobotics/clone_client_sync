@@ -1,40 +1,51 @@
 from contextlib import contextmanager
-from time import perf_counter, perf_counter_ns, sleep
+from time import get_clock_info, perf_counter, perf_counter_ns, sleep
 from typing import Generator
 import warnings
 
-import ctypes
+
+def time_nanosleep(p: int) -> None:
+    """Wrapper for nanosleep function if C library import fails."""
+    sleep(p * 1e-9)
+
+
 try:
+    import ctypes
     libc = ctypes.CDLL('libc.so.6')
     nanosleep = libc.nanosleep
 except OSError:
     warnings.warn("Failed to import libc. Using python sleep instead.", ImportWarning)
-
-    def nanosleep(p: int) -> None:
-        """Wrapper for nanosleep function if C library import fails."""
-        sleep(p / 1e9)
+    nanosleep = time_nanosleep
 
 
-def precise_interval(interval: float, tolerance: float = 1e-4) -> Generator[None, None, None]:
+def precise_interval(interval: float, precision: float = 0.2) -> Generator[None, None, None]:
     """
     Interval ticks for precise timeings.
 
     Parameters:
     - interval: Duration between each tick in seconds.
-    - tolerance: Acceptable drift in seconds for each tick.
+    - precision: The precision of the tick, higher precision means more resources used.
+                 Smaller intervals require more precision.
     """
-    interval_ns = int(interval * 1e9)
-    tolerance_ns = int(tolerance * 1e9)
-    next_tick = perf_counter_ns() + interval_ns
+    if precision < 0 or precision > 1:
+        raise ValueError("Precision must be between 0 and 1")
 
+    if interval <= 0:
+        raise ValueError("Interval must be greater than 0")
+
+    interval_ns = int(interval * 1e9)
+    resolution = get_clock_info("perf_counter").resolution
+    min_tick_ns = int(resolution * 1e9)
+    fraction = max(resolution, (1 - precision))
+
+    next_tick = perf_counter_ns() + interval_ns
     try:
         while True:
             remaining = next_tick - perf_counter_ns()
 
-            if remaining > tolerance_ns:
-                nanosleep(remaining - tolerance_ns)
-            elif remaining > 0:
-                nanosleep(remaining)
+            time_nanosleep(int(remaining * fraction))
+            while perf_counter_ns() < next_tick:
+                nanosleep(min_tick_ns)
 
             yield
 

@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: clone-client-sync
-Version: 0.0.8
+Version: 0.0.9
 Summary: Synchronous wrapper for async clone_client
 Author: Clone Inc.
 Requires-Python: >=3.10,<4.0
