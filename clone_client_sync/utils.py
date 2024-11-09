@@ -41,13 +41,14 @@ def precise_interval(interval: float, precision: float = 0.2) -> Generator[None,
     try:
         while True:
             next_tick = perf_counter_ns() + interval_ns
-            remaining = next_tick - perf_counter_ns()
 
+            yield
+
+            remaining = next_tick - perf_counter_ns()
             time_nanosleep(int(remaining * fraction))
             while perf_counter_ns() < next_tick:
                 nanosleep(min_tick_ns)
 
-            yield
     except GeneratorExit:
         pass
 
