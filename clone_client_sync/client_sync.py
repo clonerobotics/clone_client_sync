@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Coroutine, List, Optional, Sequence, Typ
 import grpc
 
 from clone_client.client import Client
-from clone_client.state_store.proto.state_store_pb2 import TelemetryData, IMUData
+from clone_client.state_store.proto.state_store_pb2 import TelemetryData, MagneticHubRaw, GaussRiderRaw
 
 
 LOGGER = logging.getLogger(__name__)
@@ -23,7 +23,8 @@ class ClientSync:
         self._async_client: Client = Client(server=hostname, address=address)
         self._latest_telemetry: TelemetryData
         self._latest_pressures: Sequence[float]
-        self._latest_imu: Sequence[IMUData]
+        self._latest_mag: Sequence[MagneticHubRaw]
+        self._latest_gr: Sequence[GaussRiderRaw]
 
         self._thread = threading.Thread(target=self._run_in_background)
         self._trcv = threading.Event()
@@ -55,13 +56,21 @@ class ClientSync:
 
         return telemetry
 
-    def get_imus(self, timeout: Optional[int] = None) -> Sequence[IMUData]:
+    def get_mags(self, timeout: Optional[int] = None) -> Sequence[MagneticHubRaw]:
         """Return the latest IMU data."""
         self._trcv.wait(timeout)
-        imu = self._latest_imu
+        mags = self._latest_mag
         self._trcv.clear()
 
-        return imu
+        return mags
+    
+    def get_gauss_rider(self, timeout: Optional[int] = None) -> Sequence[GaussRiderRaw]:
+        """Return the latest IMU data."""
+        self._trcv.wait(timeout)
+        gr = self._latest_gr
+        self._trcv.clear()
+
+        return gr
 
     def get_pressures(self, timeout: Optional[int] = None) -> Sequence[float]:
         """
@@ -89,6 +98,7 @@ class ClientSync:
         """
         self._pack.clear()
         self._pqueue_in.put_nowait(pressures)
+        print(pressures)
         self._pack.wait(timeout)
 
     async def run(self) -> None:
@@ -97,25 +107,37 @@ class ClientSync:
             async def ctrl_generator() -> AsyncGenerator[List[float], None]:
                 await self.ready.wait()
                 while not self._stop.is_set():
-                    data = await self._pqueue_in.get()
-                    if data is None:
-                        LOGGER.info("Stopping control stream.")
-                        return
+                    try:
+                        data = await self._pqueue_in.get()
+                        if data is None:
+                            LOGGER.info("Stopping control stream.")
+                            return
 
-                    yield data
-                    self._pack.set()
+                        yield data
+                        self._pack.set()
+                    except Exception as err:
+                        LOGGER.exception(err)
+                        raise err
 
             async def telemetry_consumer() -> AsyncGenerator[List[float], None]:
                 await self.ready.wait()
                 async for telemetry in client.subscribe_telemetry():
-                    if self._stop.is_set():
-                        LOGGER.info("Stopping telemetry stream.")
-                        return
 
-                    self._latest_telemetry = telemetry
-                    self._latest_pressures = telemetry.pressures
-                    self._latest_imu = telemetry.imu
-                    self._trcv.set()
+                    try:
+                        if self._stop.is_set():
+                            LOGGER.info("Stopping telemetry stream.")
+                            return
+
+                        self._latest_telemetry = telemetry
+                        self._latest_pressures = telemetry.pressures
+                        self._latest_mag = telemetry.magnetic_data
+                        self._latest_gr = telemetry.gauss_rider_data
+                        self._trcv.set()
+                    except Exception as err:
+                        LOGGER.exception(err)
+                        raise err
+                    
+
 
             control_stream_task = self.aioloop.create_task(client.stream_set_pressures(ctrl_generator()))
             telemetry_stream_task = self.aioloop.create_task(telemetry_consumer())

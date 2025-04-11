@@ -25,17 +25,11 @@ try:
     time.sleep(3)
 
     # Initialize a precise interval ticker
-    tick = precise_interval(1 / 150)
-
-    for _ in range(20):
-        start = time.perf_counter_ns()
-        next(tick)  # Tick
-        print(1 / ((time.perf_counter_ns() - start) * 1e-9))
-
-    for _ in range(20):
+    tick = precise_interval(1 / 50, precision=1)
+    for _ in range(1000):
         next(tick)  # Tick
 
-        pressures = [0] * client.async_client.number_of_muscles
+        pressures = [0.0] * client.async_client.number_of_muscles
         client.set_pressures(pressures)
 
         # Get pressures waits for available telemetry readout
@@ -43,8 +37,8 @@ try:
         print(pressures)
 
         # You can also get IMU
-        imu = client.get_imus()
-        print(imu)
+        mags = client.get_mags()
+        print(mags)
 
         # Or get the whole telemetry data at once
         telemetry = client.get_telemetry()
@@ -55,6 +49,10 @@ try:
 
         # In the current scenario all calls above would return data from different
         # telemetry ticks.
+except Exception as exc:
+    # Handle any exceptions here
+    logging.error(f"An error occurred: {exc}")
+    raise exc
 finally:
     # Make sure to cleanup client by disconnecting at the end at all times.
     # ClientSync uses threading and any exception that stops the main thread would
