@@ -98,7 +98,6 @@ class ClientSync:
         """
         self._pack.clear()
         self._pqueue_in.put_nowait(pressures)
-        print(pressures)
         self._pack.wait(timeout)
 
     async def run(self) -> None:
@@ -137,8 +136,6 @@ class ClientSync:
                         LOGGER.exception(err)
                         raise err
                     
-
-
             control_stream_task = self.aioloop.create_task(client.stream_set_pressures(ctrl_generator()))
             telemetry_stream_task = self.aioloop.create_task(telemetry_consumer())
             self.tasks = [control_stream_task, telemetry_stream_task]

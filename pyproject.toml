@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clone-client-sync"
-version = "0.0.12"
+version = "0.0.13"
 description = "Synchronous wrapper for async clone_client"
 authors = ["Clone Inc."]
 readme = "README.md"
@@ -8,6 +8,8 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 clone-client = {git="https://github.com/clonerobotics/clone_client", tag="0.0.30"}
+numpy = "^2.2.4"
+scipy = "^1.15.2"
 
 
 [build-system]
