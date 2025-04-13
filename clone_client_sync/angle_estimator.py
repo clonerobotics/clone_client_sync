@@ -223,6 +223,10 @@ class Interpol:
                 if B_flat_filtered is None:
                     continue
 
+            print(idx)
+            print(B)
+            print()
+
             B_flat_filtered = B_flat_filtered.reshape(1, -1)
             angle = interpolators[idx](B_flat_filtered)
             angles[idx] = angle

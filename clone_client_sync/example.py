@@ -36,9 +36,13 @@ try:
         pressures = client.get_pressures()
         print(pressures)
 
-        # You can also get IMU
+        # You can also get magnetic data [BETA]
         mags = client.get_mags()
         print(mags)
+
+        # Or IMU based qpos [BETA]
+        qpos = client.get_qpos()
+        print(qpos)
 
         # Or get the whole telemetry data at once
         telemetry = client.get_telemetry()

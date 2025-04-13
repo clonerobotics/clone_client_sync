@@ -22,11 +22,13 @@ class ClientSync:
 
         self._async_client: Client = Client(server=hostname, address=address)
         self._latest_telemetry: TelemetryData
+        self._latest_qpos: Sequence[float]
         self._latest_pressures: Sequence[float]
         self._latest_mag: Sequence[MagneticHubRaw]
         self._latest_gr: Sequence[GaussRiderRaw]
 
         self._thread = threading.Thread(target=self._run_in_background)
+        self._qrcv = threading.Event()
         self._trcv = threading.Event()
         self._pack = threading.Event()
         self.connected = threading.Event()
@@ -71,6 +73,20 @@ class ClientSync:
         self._trcv.clear()
 
         return gr
+    
+    def get_qpos(self, timeout: Optional[int] = None) -> Sequence[float]:
+        """
+        Returns current IMU based qpos.
+
+        Depending on the robot unit this might not be available.
+        This function will block until the qpos is received or the timeout
+        is reached.
+        """
+        self._qrcv.wait(timeout)
+        qpos = self._latest_qpos
+        self._qrcv.clear()
+
+        return qpos
 
     def get_pressures(self, timeout: Optional[int] = None) -> Sequence[float]:
         """
@@ -121,7 +137,6 @@ class ClientSync:
             async def telemetry_consumer() -> AsyncGenerator[List[float], None]:
                 await self.ready.wait()
                 async for telemetry in client.subscribe_telemetry():
-
                     try:
                         if self._stop.is_set():
                             LOGGER.info("Stopping telemetry stream.")
@@ -136,9 +151,25 @@ class ClientSync:
                         LOGGER.exception(err)
                         raise err
                     
+
+            async def qpos_consumer() -> AsyncGenerator[List[float], None]:
+                await self.ready.wait()
+                async for qpos in client.subscribe_pose_vector():
+                    try:
+                        if self._stop.is_set():
+                            LOGGER.info("Stopping qpos stream.")
+                            return
+
+                        self._latest_qpos = qpos
+                        self._qrcv.set()
+                    except Exception as err:
+                        LOGGER.exception(err)
+                        raise err
+                    
             control_stream_task = self.aioloop.create_task(client.stream_set_pressures(ctrl_generator()))
             telemetry_stream_task = self.aioloop.create_task(telemetry_consumer())
-            self.tasks = [control_stream_task, telemetry_stream_task]
+            qpos_stream_task = self.aioloop.create_task(qpos_consumer())
+            self.tasks = [control_stream_task, telemetry_stream_task, qpos_stream_task]
 
             self.connected.set()
             LOGGER.info("Connected to the robot.")
@@ -147,6 +178,7 @@ class ClientSync:
             try:
                 await control_stream_task
                 await telemetry_stream_task
+                await qpos_stream_task
             except grpc.aio.AioRpcError as err:
                 err = cast(grpc.RpcError, err)
                 if err.code() == grpc.StatusCode.CANCELLED:
