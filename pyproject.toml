@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clone-client-sync"
-version = "0.0.14"
+version = "0.0.15"
 description = "Synchronous wrapper for async clone_client"
 authors = ["Clone Inc."]
 readme = "README.md"
@@ -10,6 +10,16 @@ python = "^3.10"
 clone-client = {git="https://github.com/clonerobotics/clone_client", tag="0.0.30"}
 numpy = "^2.2.4"
 scipy = "^1.15.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.10.0"
+flake8 = "^7.1.1"
+flake8-isort = "^6.1.1"
+flake8-comprehensions = "^3.16.0"
+taskipy = "^1.14.0"
+
+[tool.taskipy.tasks]
+fmt = "isort ./clone_client_sync && black ./clone_client_sync"
 
 
 [build-system]

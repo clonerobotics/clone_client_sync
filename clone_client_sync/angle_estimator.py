@@ -1,51 +1,39 @@
+# pylint: disable=invalid-name, missing-class-docstring
+
+import json
 from collections import deque
 from dataclasses import dataclass
-import json
 from pathlib import Path
 from typing import Optional, Sequence
-import numpy as np
 
+import numpy as np
 from clone_client.state_store.proto.state_store_pb2 import MagneticSensor
 from scipy import interpolate
-
-
-B_OFFSETS = [
-     [
-        [-1.328, 0.318, 1.198],
-        [0.229, 0.198, 2.308],
-        [1.143, 0.264, 1.840],
-        [-0.534, -0.176, -0.185]
-    ], [
-        [2.524, 0.067, 1.472],
-        [2.256, 0.033, 1.407],
-        [2.288, 0.045, 1.429],
-        [-0.129, 0.367, 0.086]
-    ], [
-        [3.599, 0.000, -0.745],
-        [3.861, 0.046, -0.745],
-        [3.022, 0.034, -0.745],
-        [0.367, 0.376, -1.322]
-    ]
-]
-
 
 FH3D04_XY_MV_PER_MT = 54.0  # mV / mT for x and y axes
 FH3D04_Z_MV_PER_MT = 94.0  # mv / mT for z axis
 
 FH3D04_TEMP_DIGIT2CELS = 0.072484471  # deg C / digit
 
+
+# CONSTANTS
 FH3D04_BASIC_GAIN_XY = 128
 FH3D04_BASIC_GAIN_Z = 64
 FH3D04_BASIC_DEC_LEN = 512
 FH3D04_BASIC_SUPPLY = 2.6
 
 
+def remap_axes(b_arr: np.ndarray):
+    return -b_arr[:, [0, 2, 1]]
 
-def remap_pixels(pixels: list[MagneticSensor.MagneticPixel]) -> list[MagneticSensor.MagneticPixel]:
+
+def remap_pixels(
+    pixels: list[MagneticSensor.MagneticPixel],
+) -> list[MagneticSensor.MagneticPixel]:
     return [
         pixels[3],
-        pixels[0],
         pixels[2],
+        pixels[0],
         pixels[1],
     ]
 
@@ -72,6 +60,7 @@ class NaiveMappingEstimatorBase:
             * config.supply
             / FH3D04_BASIC_SUPPLY
         )
+
         self.h_config_factor_xy = 1 / (
             config.gain_xy
             / FH3D04_BASIC_GAIN_XY
@@ -107,14 +96,18 @@ class NaiveMappingEstimatorBase:
     def _calculate_teslas_z(self, h_val: float, t_val_pp_prime):
         h_1 = h_val * self.h_config_ratio_z
         h_2 = h_1 * self._s_z(t_val_pp_prime)
+
         return h_2
 
     def _calculate_teslas_xy(self, h_val: float, t_val_pp_prime):
         h_1 = h_val * self.h_config_factor_xy
         h_2 = h_1 * self._s_xy(t_val_pp_prime)
+
         return h_2
 
-    def calculate_sensor(self, x: float, y: float, z: float, temperature: float) -> tuple[float, np.ndarray]:
+    def calculate_sensor(
+        self, x: float, y: float, z: float, temperature: float
+    ) -> tuple[float, np.ndarray]:
         t, t_pp = self._calculate_temp(temperature)
         pixel_bs = [
             self._calculate_teslas_xy(x, t_pp),
@@ -123,63 +116,87 @@ class NaiveMappingEstimatorBase:
         ]
 
         return t, np.array(pixel_bs)
-    
+
 
 class Interpol:
-    def __init__(self, mapping_path: str) -> None:
+    def __init__(
+        self,
+        mapping_path: str,
+        filter_outlier_population: int = 10,
+        filter_iir_new_sample_weight: float = 0.3,
+        filter_outlier_sigma: float = 3.0,
+        use_filter_outliers: bool = True,
+        use_filter_iir: bool = True,
+        t_offset: int = 4000,
+        gain_xy: float = 1024,
+        gain_z: float = 512,
+    ) -> None:
         mapping = self._load_mapping(Path(mapping_path))
 
-        dip_map = mapping[0]
-        pip_map = mapping[1]
-        mcp_map = mapping[2]
+        dip_map = mapping[3]
+        pip_map = mapping[4]
+        mcp_map = mapping[5]
 
         self._dip_interpol = interpolate.RBFInterpolator(
             np.array([B for _, B in dip_map]),
-            [angle for angle, _ in dip_map],
+            [(angle[0], angle[1]) for angle, _ in dip_map],
             kernel="linear",
         )
 
         self._pip_interpol = interpolate.RBFInterpolator(
             np.array([B for _, B in pip_map]),
-            [angle for angle, _ in pip_map],
+            [(angle[0], angle[1]) for angle, _ in pip_map],
             kernel="linear",
         )
 
         self._mcp_interpol = interpolate.RBFInterpolator(
             np.array([B for _, B in mcp_map]),
-            [angle for angle, _ in mcp_map],
+            [(angle[0], angle[1]) for angle, _ in mcp_map],
             kernel="linear",
         )
 
-        self._filter_outliers_population = 50
+        self._filter_outliers_population: int = filter_outlier_population
+        self.filter_outliers_sigma: float = filter_outlier_sigma
+        self.use_filter_outliers: bool = use_filter_outliers
+        self.use_filter_iir: bool = use_filter_iir
+
+        if 1.0 < filter_iir_new_sample_weight < 0.0:
+            raise ValueError("IIR new sample weight must be between 0.0 and 1.0")
+
         self._filt_samples = deque(maxlen=self._filter_outliers_population)
+        self._iir_new_sample_weight = filter_iir_new_sample_weight
+        self._iir_state: Optional[np.ndarray] = None
+
         self.estimator = NaiveMappingEstimatorBase(
             NaiveMappingEstimatorBase.Config(
+                t_offset=t_offset,
                 dec_len=FH3D04_BASIC_DEC_LEN,
-                gain_xy=FH3D04_BASIC_GAIN_XY,
-                gain_z=FH3D04_BASIC_GAIN_Z,
+                gain_xy=gain_xy,
+                gain_z=gain_z,
                 supply=FH3D04_BASIC_SUPPLY,
             )
         )
 
-
-    def _load_mapping(self, map_path: Path) -> dict[int, Optional[list[tuple[float, np.ndarray]]]]:
+    def _load_mapping(
+        self, map_path: Path
+    ) -> dict[int, Optional[list[tuple[tuple[float, float], np.ndarray]]]]:
         """Returns jnt_nr -> (angles, B)"""
         with map_path.open("r") as fp:
             map_ = json.load(fp)
-
         return {
             int(snsr_nr): (
-                [(float(ang), np.array(B).ravel()) for ang, B in snsr_map.items()]
+                [
+                    ((float(ang[0]), float(ang[1])), np.array(B).ravel())
+                    for ang, B in snsr_map
+                ]
                 if snsr_map is not None
                 else None
             )
             for snsr_nr, snsr_map in map_.items()
         }
-    
 
     def filter_outliers(
-        self, arr_flat: np.ndarray, sig_mul=3.0
+        self, arr_flat: np.ndarray, sig_mul: float = 3.0
     ) -> Optional[np.ndarray]:
         if len(self._filt_samples) < self._filter_outliers_population:
             self._filt_samples.append(
@@ -194,8 +211,21 @@ class Interpol:
         )  # substitute outlier with last measurement
 
         return arr_flat_filtered
-    
-    def get_angles(self, sensors: Sequence[MagneticSensor], skip_filtering: bool = True) -> Optional[np.ndarray]:
+
+    def _filter_iir(self, arr_flat: np.ndarray) -> np.ndarray:
+        if self._iir_state is None:
+            filt_bs = np.array(self._filt_samples)
+            self._iir_state = np.mean(filt_bs, axis=0)
+            self._iir_state: np.ndarray  # pyright doesnt catch it
+        arr_flat_filtered = np.average(
+            np.stack([arr_flat, self._iir_state], axis=0),
+            axis=0,
+            weights=[self._iir_new_sample_weight, 1.0 - self._iir_new_sample_weight],
+        )
+        self._iir_state = arr_flat_filtered
+        return arr_flat_filtered
+
+    def get_angles(self, sensors: Sequence[MagneticSensor]) -> Optional[np.ndarray]:
         """
         Returns angles in degrees for each sensor.
         """
@@ -206,29 +236,39 @@ class Interpol:
             self._mcp_interpol,
         ]
 
-        angles = np.zeros((3, 1), dtype=np.float32)
+        angles = np.zeros((3, 2), dtype=np.float32)
+        B_tot = np.zeros((3, 4, 3), dtype=np.float32)
+
+        # Process each sensor
         for idx, sensor in enumerate(sensors):
             B = np.zeros((4, 3), dtype=np.float32)
-            for pidx, pixel in enumerate(remap_pixels(sensor.pixels)):
+            pixels = remap_pixels(sensor.pixels)
+            for pidx, pixel in enumerate(pixels):
                 _, B_pixel = self.estimator.calculate_sensor(
                     pixel.x, pixel.y, pixel.z, sensor.temperature
                 )
-
                 B[pidx] = B_pixel
 
-            B -= B_OFFSETS[idx] 
-            B_flat_filtered = B.flatten()
-            if not skip_filtering:
-                B_flat_filtered = self.filter_outliers(B_flat_filtered)
-                if B_flat_filtered is None:
-                    continue
+            B = remap_axes(B)
+            B_tot[idx] = B
 
-            print(idx)
-            print(B)
-            print()
+        # Filter outliers and apply IIR filter
+        B_flat_filtered = np.asarray([b.ravel() for b in B_tot])
+        if self.use_filter_outliers:
+            B_flat_filtered = self.filter_outliers(
+                B_flat_filtered, self.filter_outliers_sigma
+            )
+            if B_flat_filtered is None:
+                return None
 
-            B_flat_filtered = B_flat_filtered.reshape(1, -1)
-            angle = interpolators[idx](B_flat_filtered)
-            angles[idx] = angle
+            self._filt_samples.append(B_flat_filtered)
+
+        if self.use_filter_iir:
+            B_flat_filtered = self._filter_iir(B_flat_filtered)
+
+        # Interpolate angles
+        for bidx, B_sens in enumerate(B_flat_filtered):
+            angle = interpolators[bidx](B_sens[np.newaxis, :])
+            angles[bidx] = angle.ravel()
 
         return angles

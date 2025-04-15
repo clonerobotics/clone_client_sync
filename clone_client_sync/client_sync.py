@@ -1,13 +1,24 @@
 import asyncio
 import logging
 import threading
-from typing import Any, AsyncGenerator, Coroutine, List, Optional, Sequence, TypeVar, cast
+from typing import (
+    Any,
+    AsyncGenerator,
+    Coroutine,
+    List,
+    Optional,
+    Sequence,
+    TypeVar,
+    cast,
+)
 
 import grpc
-
 from clone_client.client import Client
-from clone_client.state_store.proto.state_store_pb2 import TelemetryData, MagneticHubRaw, GaussRiderRaw
-
+from clone_client.state_store.proto.state_store_pb2 import (
+    GaussRiderRaw,
+    MagneticHubRaw,
+    TelemetryData,
+)
 
 LOGGER = logging.getLogger(__name__)
 RT = TypeVar("RT")
@@ -45,7 +56,9 @@ class ClientSync:
         """Return the underlying async client for all properties access."""
         return self._async_client
 
-    def run_in_aioloop(self, coro: Coroutine[Any, Any, RT], timeout: Optional[float] = 1) -> RT:
+    def run_in_aioloop(
+        self, coro: Coroutine[Any, Any, RT], timeout: Optional[float] = 1
+    ) -> RT:
         """Run a coroutine in the current asyncio loop and wait for the result."""
         future = asyncio.run_coroutine_threadsafe(coro, self.aioloop)
         return future.result(timeout)
@@ -65,7 +78,7 @@ class ClientSync:
         self._trcv.clear()
 
         return mags
-    
+
     def get_gauss_rider(self, timeout: Optional[int] = None) -> Sequence[GaussRiderRaw]:
         """Return the latest IMU data."""
         self._trcv.wait(timeout)
@@ -73,7 +86,7 @@ class ClientSync:
         self._trcv.clear()
 
         return gr
-    
+
     def get_qpos(self, timeout: Optional[int] = None) -> Sequence[float]:
         """
         Returns current IMU based qpos.
@@ -103,7 +116,9 @@ class ClientSync:
 
         return pressures
 
-    def set_pressures(self, pressures: List[float], timeout: Optional[int] = None) -> None:
+    def set_pressures(
+        self, pressures: List[float], timeout: Optional[int] = None
+    ) -> None:
         """
         Allows individual actuation of muscles (setting the pressure).
 
@@ -119,6 +134,7 @@ class ClientSync:
     async def run(self) -> None:
         """Run the async client."""
         async with self._async_client as client:
+
             async def ctrl_generator() -> AsyncGenerator[List[float], None]:
                 await self.ready.wait()
                 while not self._stop.is_set():
@@ -150,7 +166,6 @@ class ClientSync:
                     except Exception as err:
                         LOGGER.exception(err)
                         raise err
-                    
 
             async def qpos_consumer() -> AsyncGenerator[List[float], None]:
                 await self.ready.wait()
@@ -165,8 +180,10 @@ class ClientSync:
                     except Exception as err:
                         LOGGER.exception(err)
                         raise err
-                    
-            control_stream_task = self.aioloop.create_task(client.stream_set_pressures(ctrl_generator()))
+
+            control_stream_task = self.aioloop.create_task(
+                client.stream_set_pressures(ctrl_generator())
+            )
             telemetry_stream_task = self.aioloop.create_task(telemetry_consumer())
             qpos_stream_task = self.aioloop.create_task(qpos_consumer())
             self.tasks = [control_stream_task, telemetry_stream_task, qpos_stream_task]

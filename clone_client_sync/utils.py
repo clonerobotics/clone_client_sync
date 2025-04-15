@@ -1,7 +1,7 @@
+import warnings
 from contextlib import contextmanager
 from time import get_clock_info, perf_counter, perf_counter_ns, sleep
 from typing import Generator
-import warnings
 
 
 def time_nanosleep(p: int) -> None:
@@ -11,14 +11,17 @@ def time_nanosleep(p: int) -> None:
 
 try:
     import ctypes
-    libc = ctypes.CDLL('libc.so.6')
+
+    libc = ctypes.CDLL("libc.so.6")
     nanosleep = libc.nanosleep
 except OSError:
     warnings.warn("Failed to import libc. Using python sleep instead.", ImportWarning)
     nanosleep = time_nanosleep
 
 
-def precise_interval(interval: float, precision: float = 0.2) -> Generator[None, None, None]:
+def precise_interval(
+    interval: float, precision: float = 0.2
+) -> Generator[None, None, None]:
     """
     Interval ticks for precise timeings.
 
@@ -60,7 +63,10 @@ def busy_ticker(dur: float, precision: float = 5, min_tick: float = 0.0005):
     ensuring precise timing of the loop.
     See original implementation in clone_client/utils.py.
     """
-    warnings.warn("This method is deprecated and will be removed in future versions. Use 'precise_interval' instead", DeprecationWarning)
+    warnings.warn(
+        "This method is deprecated and will be removed in future versions. Use 'precise_interval' instead",
+        DeprecationWarning,
+    )
     next_tick = perf_counter() + dur
 
     yield

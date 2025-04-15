@@ -4,7 +4,6 @@ import time
 from clone_client_sync.client_sync import ClientSync
 from clone_client_sync.utils import precise_interval
 
-
 logging.basicConfig(level=logging.DEBUG)
 client = ClientSync("ubuntu", address="/run/clone")
 client.connnect()
@@ -36,9 +35,14 @@ try:
         pressures = client.get_pressures()
         print(pressures)
 
-        # You can also get magnetic data [BETA]
+        # You can also get magnetic data
+        # [BETA] V1
         mags = client.get_mags()
         print(mags)
+
+        # [BETA] V2
+        gr = client.get_gauss_rider()
+        print(gr)
 
         # Or IMU based qpos [BETA]
         qpos = client.get_qpos()
