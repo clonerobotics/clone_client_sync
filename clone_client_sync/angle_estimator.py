@@ -216,7 +216,7 @@ class Interpol:
         """
         Returns angles in degrees for each sensor.
         """
-        if len(sensors != len(self.interpolators)):
+        if len(sensors) != len(self.interpolators):
             raise ValueError(
                 f"Number of sensors ({len(sensors)}) does not match number of interpolators ({len(self.interpolators)})"
             )
