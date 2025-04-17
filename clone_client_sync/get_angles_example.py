@@ -5,8 +5,8 @@ from clone_client_sync.client_sync import ClientSync
 from clone_client_sync.utils import precise_interval
 
 logging.basicConfig(level=logging.DEBUG)
-interpol = Interpol("/path/to/interpol_mapping.json")
-client = ClientSync("ubuntu", address="/run/clone")
+interpol = Interpol("/home/bakowroc/Documents/mappings/finger_v2/interpol_mapping.json")
+client = ClientSync("ubuntu", address="192.168.99.240")
 client.connnect()
 
 try:

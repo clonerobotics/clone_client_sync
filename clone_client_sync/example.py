@@ -5,7 +5,7 @@ from clone_client_sync.client_sync import ClientSync
 from clone_client_sync.utils import precise_interval
 
 logging.basicConfig(level=logging.DEBUG)
-client = ClientSync("ubuntu", address="/run/clone")
+client = ClientSync("ubuntu", address="192.168.99.149")
 client.connnect()
 
 try:
@@ -28,21 +28,21 @@ try:
     for _ in range(1000):
         next(tick)  # Tick
 
-        pressures = [0.0] * client.async_client.number_of_muscles
-        client.set_pressures(pressures)
+        # pressures = [0.0] * client.async_client.number_of_muscles
+        # client.set_pressures(pressures)
 
         # Get pressures waits for available telemetry readout
-        pressures = client.get_pressures()
-        print(pressures)
+        # pressures = client.get_pressures()
+        # print(pressures)
 
         # You can also get magnetic data
         # [BETA] V1
-        mags = client.get_mags()
-        print(mags)
+        # mags = client.get_mags()
+        # print(mags)
 
         # [BETA] V2
-        gr = client.get_gauss_rider()
-        print(gr)
+        # gr = client.get_gauss_rider()
+        # print(gr)
 
         # Or IMU based qpos [BETA]
         qpos = client.get_qpos()
@@ -50,7 +50,7 @@ try:
 
         # Or get the whole telemetry data at once
         telemetry = client.get_telemetry()
-        print(telemetry)
+        # print(telemetry)
 
         # All methods above behave in the same way, i.e. they wait for the next available
         # telemetry readout

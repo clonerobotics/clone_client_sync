@@ -132,28 +132,15 @@ class Interpol:
         gain_z: float = 512,
     ) -> None:
         mapping = self._load_mapping(Path(mapping_path))
-
-        dip_map = mapping[3]
-        pip_map = mapping[4]
-        mcp_map = mapping[5]
-
-        self._dip_interpol = interpolate.RBFInterpolator(
-            np.array([B for _, B in dip_map]),
-            [(angle[0], angle[1]) for angle, _ in dip_map],
-            kernel="linear",
-        )
-
-        self._pip_interpol = interpolate.RBFInterpolator(
-            np.array([B for _, B in pip_map]),
-            [(angle[0], angle[1]) for angle, _ in pip_map],
-            kernel="linear",
-        )
-
-        self._mcp_interpol = interpolate.RBFInterpolator(
-            np.array([B for _, B in mcp_map]),
-            [(angle[0], angle[1]) for angle, _ in mcp_map],
-            kernel="linear",
-        )
+        self.interpolators = [
+            interpolate.RBFInterpolator(
+                np.array([B for _, B in mapping[idx]]),
+                [(angle[0], angle[1]) for angle, _ in mapping[idx]],
+                kernel="linear",
+            )
+            for idx in range(15)
+            if mapping[idx] is not None
+        ]
 
         self._filter_outliers_population: int = filter_outlier_population
         self.filter_outliers_sigma: float = filter_outlier_sigma
@@ -229,15 +216,14 @@ class Interpol:
         """
         Returns angles in degrees for each sensor.
         """
+        if len(sensors != len(self.interpolators)):
+            raise ValueError(
+                f"Number of sensors ({len(sensors)}) does not match number of interpolators ({len(self.interpolators)})"
+            )
 
-        interpolators = [
-            self._dip_interpol,
-            self._pip_interpol,
-            self._mcp_interpol,
-        ]
-
-        angles = np.zeros((3, 2), dtype=np.float32)
-        B_tot = np.zeros((3, 4, 3), dtype=np.float32)
+        no_sensors = len(self.interpolators)
+        angles = np.zeros((no_sensors, 2), dtype=np.float32)
+        B_tot = np.zeros((no_sensors, 4, 3), dtype=np.float32)
 
         # Process each sensor
         for idx, sensor in enumerate(sensors):
@@ -268,7 +254,7 @@ class Interpol:
 
         # Interpolate angles
         for bidx, B_sens in enumerate(B_flat_filtered):
-            angle = interpolators[bidx](B_sens[np.newaxis, :])
+            angle = self.interpolators[bidx](B_sens[np.newaxis, :])
             angles[bidx] = angle.ravel()
 
         return angles
